@@ -5,6 +5,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI, Request
 
+from app.api.admin import admin_router
+from app.clock import Clock, SystemClock
 from app.config import Settings, get_settings
 from app.db import create_db_engine, create_session_factory, init_db
 
@@ -24,7 +26,12 @@ def _health_router() -> APIRouter:
     return router
 
 
-def create_app(settings: Settings | None = None, *, create_tables: bool = True) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    create_tables: bool = True,
+    clock: Clock | None = None,
+) -> FastAPI:
     """Build the API.
 
     With ``create_tables`` the schema is created immediately; otherwise it is
@@ -47,8 +54,10 @@ def create_app(settings: Settings | None = None, *, create_tables: bool = True) 
     app.state.settings = settings
     app.state.engine = engine
     app.state.session_factory = create_session_factory(engine)
+    app.state.clock = clock or SystemClock()
 
     app.include_router(_health_router())
+    app.include_router(admin_router())
     return app
 
 
