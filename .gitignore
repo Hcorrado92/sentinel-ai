@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+*.egg-info/
+
+# Node / Vite
+node_modules/
+dist/
+coverage/
+.vite/
+
+# Local data and secrets (never committed)
+*.db
+*.sqlite
+*.sqlite3
+backend/data/
+uploads/
+reports/
+.env
+.env.*
+!.env.example
+
+# Sentinel work directories (isolated repair clones, seeded demo repos)
+var/
