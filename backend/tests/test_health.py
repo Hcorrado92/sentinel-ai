@@ -12,11 +12,14 @@ def test_health_returns_ok_with_mock_provider(client):
     response = client.get("/api/v1/health")
 
     assert response.status_code == 200
-    assert response.json() == {
+    body = response.json()
+    providers = body.pop("providers")
+    assert body == {
         "status": "ok",
         "ai_provider": "mock",
         "ai_provider_mock": True,
     }
+    assert [p["name"] for p in providers] == ["mock", "anthropic", "openai", "gemini"]
 
 
 def test_health_reports_non_mock_provider(tmp_path):
