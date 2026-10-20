@@ -34,6 +34,7 @@ export function ApplicationsPage() {
                 <th className="px-3 py-2 text-right">Active incidents</th>
                 <th className="px-3 py-2 text-right">Resolved incidents</th>
                 <th className="px-3 py-2 text-right">Total</th>
+                <th className="px-3 py-2 text-right">AI cost</th>
                 <th className="px-3 py-2">Registered</th>
               </tr>
             </thead>
@@ -53,6 +54,9 @@ export function ApplicationsPage() {
                     {app.incident_counts?.resolved ?? 0}
                   </td>
                   <td className="px-3 py-2 text-right">{app.total_incidents}</td>
+                  <td className="px-3 py-2 text-right text-slate-600" data-testid="ai-cost">
+                    {typeof app.ai_cost_usd === "number" ? `$${app.ai_cost_usd.toFixed(4)}` : "not available"}
+                  </td>
                   <td className="px-3 py-2 text-slate-600">{formatDate(app.created_at)}</td>
                 </tr>
               ))}

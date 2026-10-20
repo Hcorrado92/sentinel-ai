@@ -44,6 +44,9 @@ class ApplicationSummary(BaseModel):
     monthly_spend_usd: float
     incident_counts: dict[str, int]
     total_incidents: int
+    # Sum of the AI costs reported for RCA and repair runs; ``None`` ("not
+    # available") when no provider reported a cost, e.g. under the mock.
+    ai_cost_usd: float | None
 
 
 class IncidentOut(BaseModel):
@@ -155,6 +158,18 @@ def dashboard_router() -> APIRouter:
         counts: dict[int, dict[str, int]] = {}
         for application_id, incident_status, count in rows:
             counts.setdefault(application_id, {})[incident_status] = count
+        costs: dict[int, float] = {}
+        for model in (RCAReport, RepairAttempt):
+            # SUM ignores NULLs and is NULL when no cost was reported.
+            cost_rows = db.execute(
+                select(Incident.application_id, func.sum(model.cost_usd))
+                .select_from(model)
+                .join(Incident, Incident.id == model.incident_id)
+                .group_by(Incident.application_id)
+            ).all()
+            for application_id, total in cost_rows:
+                if total is not None:
+                    costs[application_id] = costs.get(application_id, 0.0) + float(total)
 
         result = []
         for application in applications:
@@ -170,6 +185,7 @@ def dashboard_router() -> APIRouter:
                     monthly_spend_usd=application.monthly_spend_usd,
                     incident_counts=by_status,
                     total_incidents=sum(by_status.values()),
+                    ai_cost_usd=costs.get(application.id),
                 ).model_dump()
             )
         return result

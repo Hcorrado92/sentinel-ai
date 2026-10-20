@@ -72,6 +72,19 @@ describe("ApplicationsPage", () => {
     expect(fn.mock.calls[0][0]).toBe("/api/v1/applications");
   });
 
+  it("shows the aggregate AI cost, or 'not available' when the provider reports none", async () => {
+    mockFetch(200, [
+      { ...applications[0], ai_cost_usd: null },
+      { ...applications[1], ai_cost_usd: 0.125 },
+    ]);
+    renderPage();
+
+    const shop = within(await screen.findByTestId("application-row-1"));
+    expect(shop.getByTestId("ai-cost")).toHaveTextContent("not available");
+    const billing = within(screen.getByTestId("application-row-2"));
+    expect(billing.getByTestId("ai-cost")).toHaveTextContent("$0.1250");
+  });
+
   it("shows an empty state when no applications exist", async () => {
     mockFetch(200, []);
     renderPage();

@@ -56,5 +56,11 @@ export default defineConfig(({ command }) => ({
     environment: "jsdom",
     globals: true,
     setupFiles: ["src/setupTests.ts"],
+    // Spawning one forked process per file can exceed Vitest's worker start-up
+    // timeout on loaded Windows machines; worker threads run sequentially are
+    // cheaper to start and keep the suite deterministic.
+    pool: "threads",
+    fileParallelism: false,
+    maxWorkers: 1,
   },
 }));
