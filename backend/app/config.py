@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     workdir: str = "./var/workdir"
     max_repair_attempts: int = 3
     job_timeout_seconds: int = 600
+    # Limits for patches proposed by the repair engine.
+    max_patch_files: int = 20
+    max_patch_bytes: int = 200 * 1024
 
     # Job queue / worker.
     # When true, API endpoints that enqueue a job process it before responding.
