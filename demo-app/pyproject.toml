@@ -1,0 +1,7 @@
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
+markers = [
+    "fault_reproduction: reproduces an intentional demo fault (asserts the faulty behaviour; excluded from Sentinel's repair verification)",
+]
