@@ -465,10 +465,13 @@ def run_repair(
     """
     test_runner = test_runner or runner
     run = _RepairRun(db, incident, repo, clock, job_id)
-    run.audit(
-        "repair_started",
-        {"repository_id": run.repo_id, "provider": getattr(provider, "name", None)},
-    )
+    started: dict[str, Any] = {
+        "repository_id": run.repo_id,
+        "provider": getattr(provider, "name", None),
+    }
+    if job_id is not None:
+        started["job_id"] = job_id
+    run.audit("repair_started", started)
 
     if not _is_authorized(db, repo, incident):
         return run.stop(STOP_UNAUTHORIZED, "repository is not authorized for this application")

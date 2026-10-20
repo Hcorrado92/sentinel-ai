@@ -151,6 +151,59 @@ export interface PullRequest {
   published_at: string | null;
 }
 
+export type RunType = "rca" | "repair";
+export type RunStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+
+export interface Run {
+  id: number;
+  type: RunType | string;
+  status: RunStatus | string;
+  incident_id: number | null;
+  incident_title: string | null;
+  application_id: number | null;
+  attempts: number;
+  max_attempts: number;
+  error: string | null;
+  result_ref: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_ms: number | null;
+  result: string | null;
+  stop_reason: string | null;
+  provider: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  /** USD reported by the provider; null when not available (mock). */
+  cost_usd: number | null;
+}
+
+export interface RunPage {
+  items: Run[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+/** Response shape of GET /api/v1/costs (backend/app/api/costs.py). */
+export interface ApplicationCost {
+  application_id: number;
+  application_name: string;
+  rca_runs: number;
+  repair_attempts: number;
+  runs_without_cost: number;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cost_usd: number | null;
+}
+
+export interface CostSummary {
+  items: ApplicationCost[];
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cost_usd: number | null;
+}
+
 export interface TimelineEntry {
   id: number;
   type: string;
