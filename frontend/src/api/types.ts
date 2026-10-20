@@ -57,6 +57,100 @@ export interface IncidentEvent {
   metadata: Record<string, unknown>;
 }
 
+/** Response shapes of the job and pull request APIs (backend/app/api/jobs.py, pull_requests.py). */
+
+export interface JobAccepted {
+  job_id: number;
+  status: string;
+}
+
+export interface RCAHypothesis {
+  title: string;
+  description: string;
+  confidence: number;
+  evidence: string[];
+  status: "hypothesis" | "confirmed" | string;
+}
+
+export interface SuspectLocation {
+  file: string;
+  function: string | null;
+  reason: string;
+}
+
+export interface RCAReportBody {
+  summary?: string;
+  hypotheses?: RCAHypothesis[];
+  suspect_locations?: SuspectLocation[];
+  uncertainties?: string[];
+  next_steps?: string[];
+}
+
+export interface RCAReport {
+  id: number;
+  incident_id: number;
+  job_id: number | null;
+  status: string;
+  summary: string;
+  report: RCAReportBody;
+  provider: string | null;
+  model: string | null;
+  is_mock: boolean;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cost_usd: number | null;
+  error: string | null;
+  duration_ms: number | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+export interface RepairAttempt {
+  id: number;
+  incident_id: number;
+  job_id: number | null;
+  repository_id: number | null;
+  attempt_number: number;
+  branch_name: string | null;
+  status: string;
+  explanation: string | null;
+  diff: string | null;
+  test_command: string[] | null;
+  test_output: string | null;
+  test_summary: Record<string, unknown> | null;
+  returncode: number | null;
+  tests_passed: boolean | null;
+  regression_test_failed_before: boolean | null;
+  commit_sha: string | null;
+  stop_reason: string | null;
+  error: string | null;
+  pr_url: string | null;
+  duration_ms: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cost_usd: number | null;
+  created_at: string;
+  finished_at: string | null;
+}
+
+export interface PullRequest {
+  id: number;
+  incident_id: number;
+  repair_attempt_id: number;
+  repository_id: number | null;
+  status: "prepared" | "published" | "publish_failed" | string;
+  branch: string;
+  base: string;
+  title: string;
+  body: string;
+  github_repo: string | null;
+  url: string | null;
+  error: string | null;
+  draft: boolean;
+  created_at: string;
+  published_at: string | null;
+}
+
 export interface TimelineEntry {
   id: number;
   type: string;
