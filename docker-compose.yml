@@ -1,0 +1,62 @@
+# Documentation only: this file is NOT built or verified by the project.
+# Secrets are read from the host environment; never write them here.
+#   export SENTINEL_ADMIN_TOKEN=...   (and optionally ANTHROPIC_API_KEY)
+#   docker compose up --build
+#   docker compose run --rm api python -m app.seed
+
+x-sentinel-env: &sentinel-env
+  SENTINEL_ADMIN_TOKEN: ${SENTINEL_ADMIN_TOKEN:?set SENTINEL_ADMIN_TOKEN on the host}
+  SENTINEL_DATABASE_URL: sqlite:////srv/sentinel/var/sentinel.db
+  SENTINEL_WORKDIR: /srv/sentinel/var/workdir
+  SENTINEL_AI_PROVIDER: ${SENTINEL_AI_PROVIDER:-mock}
+  SENTINEL_GITHUB_PUBLISH: "false"
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+
+services:
+  api:
+    build:
+      context: .
+      target: backend
+    environment: *sentinel-env
+    ports:
+      - "8000:8000"
+    volumes:
+      - sentinel-data:/srv/sentinel/var
+
+  worker:
+    build:
+      context: .
+      target: backend
+    command: ["python", "-m", "app.worker"]
+    environment: *sentinel-env
+    volumes:
+      - sentinel-data:/srv/sentinel/var
+    depends_on:
+      - api
+
+  frontend:
+    build:
+      context: .
+      target: frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+
+  demo-app:
+    build:
+      context: .
+      target: demo-app
+    environment:
+      DEMO_ENVIRONMENT: development
+      DEMO_FAULTS_ENABLED: "true"
+      SENTINEL_URL: http://api:8000
+      # Ingest key printed by `python -m app.seed`, supplied from the host.
+      SENTINEL_INGEST_KEY: ${SENTINEL_INGEST_KEY:-}
+    ports:
+      - "8001:8001"
+    depends_on:
+      - api
+
+volumes:
+  sentinel-data:
