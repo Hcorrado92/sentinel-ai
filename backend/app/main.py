@@ -13,10 +13,12 @@ from app.api.admin import admin_router
 from app.api.dashboard import dashboard_router
 from app.api.ingest import ingest_router
 from app.api.jobs import jobs_router
+from app.api.pull_requests import pull_requests_router
 from app.clock import Clock, SystemClock
 from app.config import Settings, get_settings
 from app.db import create_db_engine, create_session_factory, init_db
-from app.jobs.handlers import build_handlers
+from app.jobs.handlers import GIT_TIMEOUT_SECONDS, build_handlers
+from app.runner import SubprocessRunner
 
 
 def _health_router() -> APIRouter:
@@ -76,12 +78,15 @@ def create_app(
     app.state.session_factory = create_session_factory(engine)
     app.state.clock = clock or SystemClock()
     app.state.job_handlers = build_handlers(settings)
+    # git/gh runner used for pull requests (wrapped in the allow-list per call).
+    app.state.git_runner = SubprocessRunner(default_timeout=GIT_TIMEOUT_SECONDS)
 
     app.include_router(_health_router())
     app.include_router(admin_router())
     app.include_router(ingest_router())
     app.include_router(dashboard_router())
     app.include_router(jobs_router())
+    app.include_router(pull_requests_router())
     app.add_exception_handler(StarletteHTTPException, _http_error)
     return app
 

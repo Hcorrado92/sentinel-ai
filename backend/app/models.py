@@ -199,3 +199,31 @@ class RepairAttempt(Base):
     cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class PullRequest(Base):
+    """Draft pull request prepared from a verified repair attempt."""
+
+    __tablename__ = "pull_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    incident_id: Mapped[int] = mapped_column(
+        ForeignKey("incidents.id"), nullable=False, index=True
+    )
+    repair_attempt_id: Mapped[int] = mapped_column(
+        ForeignKey("repair_attempts.id"), nullable=False, index=True
+    )
+    repository_id: Mapped[int | None] = mapped_column(
+        ForeignKey("authorized_repositories.id"), nullable=True
+    )
+    # prepared | published | publish_failed
+    status: Mapped[str] = mapped_column(String(20), default="prepared", nullable=False)
+    branch: Mapped[str] = mapped_column(String(300), nullable=False)
+    base: Mapped[str] = mapped_column(String(200), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    github_repo: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
