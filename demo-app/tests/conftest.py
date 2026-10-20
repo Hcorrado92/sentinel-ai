@@ -5,6 +5,13 @@ from demo_app.config import DemoSettings
 from demo_app.main import create_app
 
 
+@pytest.fixture(autouse=True)
+def _no_sentinel_env(monkeypatch):
+    # Keep tests hermetic: never report to a real Sentinel from the environment.
+    monkeypatch.delenv("SENTINEL_URL", raising=False)
+    monkeypatch.delenv("SENTINEL_INGEST_KEY", raising=False)
+
+
 @pytest.fixture
 def faulty_client() -> TestClient:
     app = create_app(DemoSettings(environment="development", faults_enabled=True))

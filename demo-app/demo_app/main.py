@@ -19,10 +19,13 @@ returns 422, and the discounted total is clamped at zero.
 
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from demo_app.config import DemoSettings, load_settings
+from demo_app.sentinel_client import CORRELATION_HEADER, SentinelReporter
 
 USERS: dict[int, dict[str, str | None]] = {
     1: {"name": "Ada Example", "email": "ada@example.test", "nickname": "ada"},
@@ -89,12 +92,33 @@ def apply_discount(subtotal: float, coupon: str | None, faults_enabled: bool) ->
     return round(total, 2)
 
 
-def create_app(settings: DemoSettings | None = None) -> FastAPI:
+def create_app(
+    settings: DemoSettings | None = None,
+    reporter: SentinelReporter | None = None,
+) -> FastAPI:
     settings = settings if settings is not None else load_settings()
+    if reporter is None:
+        reporter = SentinelReporter.from_env(environment=settings.environment)
     faults = settings.faults_enabled
 
     app = FastAPI(title="Sentinel Demo Shop")
     app.state.settings = settings
+    app.state.sentinel_reporter = reporter
+
+    @app.exception_handler(Exception)
+    async def report_unhandled_exception(request: Request, exc: Exception) -> PlainTextResponse:
+        # Report to Sentinel (best effort, never raises) and keep the plain 500.
+        try:
+            await run_in_threadpool(
+                reporter.report_exception,
+                exc,
+                method=request.method,
+                path=request.url.path,
+                correlation_id=request.headers.get(CORRELATION_HEADER),
+            )
+        except Exception:  # noqa: BLE001 - reporting must never change the response
+            pass
+        return PlainTextResponse("Internal Server Error", status_code=500)
     orders: dict[int, dict[str, object]] = {
         1: {"id": 1, "product": "widget", "quantity": 3, "subtotal": 30.0},
     }
