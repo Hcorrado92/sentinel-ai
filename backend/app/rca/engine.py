@@ -3,9 +3,12 @@
 ``run_rca`` maps the stack trace to files of the authorized repository through
 the read-only ``RepoReader`` (T10), builds an injection-safe prompt, validates
 the provider output as ``RCAReportModel`` (which downgrades any "confirmed"
-hypothesis) and stores an ``RCAReport`` with status ``completed`` or
-``failed``. Audit/timeline entries ``rca_started`` and ``rca_completed`` /
-``rca_failed`` are recorded.
+hypothesis) and stores the redacted report as an ``RCAReport`` with status
+``completed`` or ``failed``. When the application's AI budget is already
+spent the provider is not called and the report fails with
+``budget_exhausted``; reported costs are added to the application's spend.
+Audit/timeline entries ``rca_started`` and ``rca_completed`` / ``rca_failed``
+are recorded.
 """
 
 import re
@@ -18,10 +21,10 @@ from sqlalchemy.orm import Session
 from app.ai.base import AIProvider
 from app.ai.prompts import RepoExcerpt, build_rca_prompt
 from app.clock import Clock
-from app.models import AuditLog, Event, Incident, RCAReport
+from app.models import Application, AuditLog, Event, Incident, RCAReport
 from app.rca.schemas import RCAReportModel
 from app.repo_tools import RepoAccessError, RepoReader
-from app.security.redaction import redact_text
+from app.security.redaction import redact_obj, redact_text
 
 RCA_ACTOR = "rca"
 EXCERPT_CONTEXT_LINES = 30
@@ -120,6 +123,23 @@ def _audit(
     )
 
 
+class BudgetExhausted(Exception):
+    """The application's AI budget is spent: no provider call is made."""
+
+    code = "budget_exhausted"
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(f"{self.code}: {detail}")
+
+
+def budget_exhausted(application: Application | None) -> bool:
+    return (
+        application is not None
+        and application.budget_usd is not None
+        and (application.monthly_spend_usd or 0.0) >= application.budget_usd
+    )
+
+
 def _error_reason(exc: BaseException) -> str:
     reason = f"{type(exc).__name__}: {exc}"
     return redact_text(reason)[:MAX_ERROR_CHARS]
@@ -146,14 +166,30 @@ def run_rca(
     _audit(db, clock, incident, "rca_started", {"rca_report_id": report.id, "provider": provider.name})
     db.commit()
 
+    application = (
+        db.get(Application, incident.application_id)
+        if incident.application_id is not None
+        else None
+    )
     try:
+        if budget_exhausted(application):
+            # The provider is never called once the application's budget is spent.
+            raise BudgetExhausted(
+                f"application budget of {application.budget_usd} USD is exhausted"
+            )
         ordered = sorted(events, key=lambda e: _as_utc(e.timestamp))
         stack_trace = ordered[-1].stack_trace if ordered else ""
         excerpts, top_frame = gather_context(repo_reader, stack_trace)
         prompt = build_rca_prompt(incident, ordered, excerpts, top_frame)
         result = provider.generate_structured(prompt, RCAReportModel)
+        if application is not None and result.usage.cost_usd is not None:
+            application.monthly_spend_usd = (
+                application.monthly_spend_usd or 0.0
+            ) + result.usage.cost_usd
         # Re-validate: the schema downgrades any "confirmed" status from the model.
         validated = RCAReportModel.model_validate(result.output.model_dump(mode="json"))
+        # The model output is untrusted: it is redacted before it is stored.
+        stored = redact_obj(validated.model_dump(mode="json"))
     except Exception as exc:  # noqa: BLE001 - any provider failure is recorded
         finished = clock.now()
         report.status = "failed"
@@ -172,8 +208,8 @@ def run_rca(
 
     finished = clock.now()
     report.status = "completed"
-    report.summary = validated.summary
-    report.report = validated.model_dump(mode="json")
+    report.summary = stored["summary"]
+    report.report = stored
     report.provider = result.provider
     report.model = result.model
     report.input_tokens = result.usage.input_tokens

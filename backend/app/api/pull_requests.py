@@ -24,6 +24,7 @@ from app.jobs.handlers import latest_completed_rca
 from app.models import AuthorizedRepository, PullRequest, RepairAttempt
 from app.runner import AllowListRunner
 from app.security.auth import require_admin
+from app.security.redaction import redact_text
 
 
 class PullRequestOut(BaseModel):
@@ -53,11 +54,12 @@ def _pr_out(pr: PullRequest) -> dict:
         status=pr.status,
         branch=pr.branch,
         base=pr.base,
-        title=pr.title,
-        body=pr.body,
+        # Stored redacted (app.github.pr); redacted again as defence in depth.
+        title=redact_text(pr.title),
+        body=redact_text(pr.body),
         github_repo=pr.github_repo,
         url=pr.url,
-        error=pr.error,
+        error=redact_text(pr.error) if pr.error else pr.error,
         draft=True,
         created_at=pr.created_at,
         published_at=pr.published_at,

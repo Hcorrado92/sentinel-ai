@@ -7,6 +7,8 @@ it while attempts remain.
 ``rca`` runs the RCA engine; ``repair`` runs the repair engine on the latest
 completed RCA and, when the repair is verified by tests, confirms the matching
 hypothesis. A repair that does not succeed fails the job with its stop reason.
+The repository always comes from the incident's own application, and the
+repair engine re-checks that authorization (``unauthorized_repository``).
 """
 
 from collections.abc import Callable, Mapping
@@ -131,6 +133,8 @@ def make_repair_handler(
         incident = db.get(Incident, ctx.job.incident_id) if ctx.job.incident_id else None
         if incident is None:
             raise JobError(f"incident {ctx.job.incident_id} not found")
+        if ctx.job.application_id is not None and ctx.job.application_id != incident.application_id:
+            raise JobError("the job's application does not match the incident's application")
         rca = latest_completed_rca(db, incident.id)
         if rca is None:
             raise JobError("no completed RCA report for this incident")
