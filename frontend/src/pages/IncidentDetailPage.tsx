@@ -1,7 +1,8 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ApiError, apiFetch } from "../api/client";
 import type {
+  EventStats,
   IncidentDetail,
   IncidentEvent,
   JobAccepted,
@@ -12,6 +13,7 @@ import type {
   TimelineEntry,
 } from "../api/types";
 import { SeverityBadge, StatusBadge, formatDate } from "../components/Badges";
+import { FrequencySparkline } from "../components/Charts";
 import { DiffViewer } from "../components/DiffViewer";
 import { EmptyState, ErrorState, Loading } from "../components/StatusViews";
 import { useApi, type ApiState } from "../hooks/useApi";
@@ -22,6 +24,7 @@ const TIMELINE_LABELS: Record<string, string> = {
   event_received: "Event received",
   incident_grouped: "Grouped into incident",
   incident_regressed: "Regression: incident reopened",
+  incident_resolved: "Marked resolved",
 };
 
 const TIMELINE_DOTS: Record<string, string> = {
@@ -140,10 +143,37 @@ function EventsSection({ incidentId }: { incidentId: string }) {
   );
 }
 
-function TimelineSection({ incidentId }: { incidentId: string }) {
+function FrequencySection({ incidentId }: { incidentId: string }) {
+  const { data, error, loading, reload } = useApi<EventStats>(
+    `/api/v1/incidents/${encodeURIComponent(incidentId)}/stats?bucket=hour`,
+  );
+  const raw = data?.buckets;
+  const buckets = Array.isArray(raw) ? raw : [];
+
+  return (
+    <section aria-labelledby="frequency-heading" className="rounded border border-slate-200 bg-white p-4">
+      <h2 id="frequency-heading" className="mb-3 text-lg font-semibold">
+        Event frequency
+      </h2>
+      {loading ? (
+        <Loading label="Loading event frequency…" />
+      ) : error ? (
+        <ErrorState error={error} what="the event frequency" onRetry={reload} />
+      ) : (
+        <FrequencySparkline buckets={buckets} title="Events per hour" />
+      )}
+    </section>
+  );
+}
+
+function TimelineSection({ incidentId, version = 0 }: { incidentId: string; version?: number }) {
   const { data, error, loading, reload } = useApi<TimelineEntry[]>(
     `/api/v1/incidents/${encodeURIComponent(incidentId)}/timeline`,
   );
+  // Reload after an action on the incident (e.g. marking it resolved).
+  useEffect(() => {
+    if (version > 0) reload();
+  }, [version, reload]);
   const entries = chronological(Array.isArray(data) ? data : []);
 
   return (
@@ -293,11 +323,15 @@ function jobMessage(kind: string, job: JobAccepted): string {
 
 function ActionsPanel({
   incidentId,
+  incidentStatus,
+  onResolved,
   rca,
   repairs,
   pr,
 }: {
   incidentId: string;
+  incidentStatus: string;
+  onResolved: (incident: IncidentDetail) => void;
   rca: ApiState<RCAReport>;
   repairs: ApiState<RepairAttempt[]>;
   pr: ApiState<PullRequest>;
@@ -320,11 +354,15 @@ function ActionsPanel({
     : !attempts.some((attempt) => attempt.status === "succeeded")
       ? "Not available: a successful repair verified by the repository tests is required."
       : null;
+  const resolveReason =
+    incidentStatus === "resolved"
+      ? "Already resolved. A new matching event will reopen it as regressed."
+      : null;
 
   return (
     <section aria-labelledby="actions-heading" className="rounded border border-slate-200 bg-white p-4">
       <SectionHeading id="actions-heading">Actions</SectionHeading>
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <ActionControl
           id="action-rca"
           label="Run RCA"
@@ -358,6 +396,17 @@ function ActionsPanel({
             pr.reload();
             repairs.reload();
             return `Draft pull request ${created.status.replace(/_/g, " ")}.`;
+          }}
+        />
+        <ActionControl
+          id="action-resolve"
+          label="Mark resolved"
+          runningLabel="Resolving…"
+          disabledReason={resolveReason}
+          run={async () => {
+            const updated = await apiFetch<IncidentDetail>(`${base}/resolve`, { method: "POST" });
+            onResolved(updated);
+            return "Incident marked resolved.";
           }}
         />
       </div>
@@ -609,7 +658,15 @@ function PullRequestSection({ pr, repairs }: { pr: ApiState<PullRequest>; repair
   );
 }
 
-function IncidentWorkspace({ incidentId }: { incidentId: string }) {
+function IncidentWorkspace({
+  incidentId,
+  incidentStatus,
+  onResolved,
+}: {
+  incidentId: string;
+  incidentStatus: string;
+  onResolved: (incident: IncidentDetail) => void;
+}) {
   const base = `/api/v1/incidents/${encodeURIComponent(incidentId)}`;
   const rca = useApi<RCAReport>(`${base}/rca`);
   const repairs = useApi<RepairAttempt[]>(`${base}/repairs`);
@@ -617,7 +674,14 @@ function IncidentWorkspace({ incidentId }: { incidentId: string }) {
 
   return (
     <>
-      <ActionsPanel incidentId={incidentId} rca={rca} repairs={repairs} pr={pr} />
+      <ActionsPanel
+        incidentId={incidentId}
+        incidentStatus={incidentStatus}
+        onResolved={onResolved}
+        rca={rca}
+        repairs={repairs}
+        pr={pr}
+      />
       <RCASection rca={rca} />
       <RepairsSection repairs={repairs} />
       <PullRequestSection pr={pr} repairs={repairs} />
@@ -627,7 +691,21 @@ function IncidentWorkspace({ incidentId }: { incidentId: string }) {
 
 export function IncidentDetailPage() {
   const { id = "" } = useParams();
-  const { data, error, loading, reload } = useApi<IncidentDetail>(`/api/v1/incidents/${encodeURIComponent(id)}`);
+  const { data: loaded, error, loading, reload } = useApi<IncidentDetail>(`/api/v1/incidents/${encodeURIComponent(id)}`);
+  // The incident returned by an action (resolve) replaces the loaded one
+  // without unmounting the page, so the action result stays visible.
+  const [updated, setUpdated] = useState<IncidentDetail | null>(null);
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    setUpdated(null);
+    setVersion(0);
+  }, [id, loaded]);
+  const data = updated ?? loaded;
+
+  function onResolved(incident: IncidentDetail) {
+    setUpdated(incident);
+    setVersion((n) => n + 1);
+  }
 
   return (
     <div className="space-y-6">
@@ -648,12 +726,13 @@ export function IncidentDetailPage() {
       ) : (
         <>
           <IncidentHeader incident={data} />
-          <IncidentWorkspace incidentId={id} />
+          <FrequencySection incidentId={id} />
+          <IncidentWorkspace incidentId={id} incidentStatus={data.status} onResolved={onResolved} />
           <div className="grid gap-6 lg:grid-cols-3">
             <div className="lg:col-span-2">
               <EventsSection incidentId={id} />
             </div>
-            <TimelineSection incidentId={id} />
+            <TimelineSection incidentId={id} version={version} />
           </div>
         </>
       )}

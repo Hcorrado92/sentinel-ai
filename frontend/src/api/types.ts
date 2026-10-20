@@ -204,6 +204,20 @@ export interface CostSummary {
   cost_usd: number | null;
 }
 
+/** Response shape of GET /api/v1/incidents/{id}/stats and /api/v1/stats/events (backend/app/api/stats.py). */
+export interface BucketCount {
+  start: string;
+  count: number;
+}
+
+export interface EventStats {
+  bucket: "hour" | "day" | string;
+  incident_id: number | null;
+  application_id: number | null;
+  total: number;
+  buckets: BucketCount[];
+}
+
 export interface TimelineEntry {
   id: number;
   type: string;
