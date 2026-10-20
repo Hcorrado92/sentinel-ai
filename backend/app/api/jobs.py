@@ -1,8 +1,13 @@
-"""RCA job endpoints and the run history.
+"""RCA and repair job endpoints and the run history.
 
 ``POST /incidents/{id}/rca`` enqueues an RCA job (202, or 409 when one is
-already queued/running). With ``SENTINEL_RUN_JOBS_INLINE=true`` the job is
-processed before responding. All endpoints require the admin bearer token.
+already queued/running). ``POST /incidents/{id}/repair`` enqueues a repair job
+(409 without a completed RCA or while a repair job is active, 422 when the
+application has no authorized repository); ``GET /incidents/{id}/repairs``
+lists the repair attempts. ``GET /runs`` lists RCA and repair runs with their
+result and cost (``null`` when the provider reports none, e.g. the mock).
+With ``SENTINEL_RUN_JOBS_INLINE=true`` the job is processed before responding.
+All endpoints require the admin bearer token.
 """
 
 from datetime import datetime, timezone
@@ -18,8 +23,10 @@ from app.clock import Clock, get_clock
 from app.config import Settings
 from app.db import get_db
 from app.jobs import queue
-from app.models import AuditLog, Incident, Job, RCAReport
+from app.jobs.handlers import latest_completed_rca, repair_repository_for
+from app.models import AuditLog, Incident, Job, RCAReport, RepairAttempt
 from app.security.auth import require_admin
+from app.security.redaction import redact_text
 
 JobType = Literal["rca", "repair"]
 JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
@@ -64,6 +71,40 @@ class RunOut(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     duration_ms: int | None
+    # Outcome of the run: the latest RCA report status or repair attempt status.
+    result: str | None
+    stop_reason: str | None
+    input_tokens: int | None
+    output_tokens: int | None
+    cost_usd: float | None
+
+
+class RepairAttemptOut(BaseModel):
+    id: int
+    incident_id: int
+    job_id: int | None
+    repository_id: int | None
+    attempt_number: int
+    branch_name: str | None
+    status: str
+    explanation: str | None
+    diff: str | None
+    test_command: list[str] | None
+    test_output: str | None
+    test_summary: dict[str, Any] | None
+    returncode: int | None
+    tests_passed: bool | None
+    regression_test_failed_before: bool | None
+    commit_sha: str | None
+    stop_reason: str | None
+    error: str | None
+    pr_url: str | None
+    duration_ms: int | None
+    input_tokens: int | None
+    output_tokens: int | None
+    cost_usd: float | None
+    created_at: datetime
+    finished_at: datetime | None
 
 
 class RunPage(BaseModel):
@@ -86,7 +127,68 @@ def _duration_ms(job: Job) -> int | None:
     return max(int(delta.total_seconds() * 1000), 0)
 
 
-def _run_out(job: Job, incident_title: str | None) -> dict:
+def _sum(values: list[Any]) -> Any:
+    present = [value for value in values if value is not None]
+    return sum(present) if present else None
+
+
+def _run_details(db: Session, jobs: list[Job]) -> dict[int, dict[str, Any]]:
+    """Result, stop reason, tokens and cost of each run (``None`` when unknown)."""
+    ids = [job.id for job in jobs]
+    rows: dict[int, list[Any]] = {job_id: [] for job_id in ids}
+    if ids:
+        for report in db.scalars(
+            select(RCAReport).where(RCAReport.job_id.in_(ids)).order_by(RCAReport.id)
+        ):
+            rows[report.job_id].append(report)
+        for attempt in db.scalars(
+            select(RepairAttempt).where(RepairAttempt.job_id.in_(ids)).order_by(RepairAttempt.id)
+        ):
+            rows[attempt.job_id].append(attempt)
+    details: dict[int, dict[str, Any]] = {}
+    for job_id, items in rows.items():
+        last = items[-1] if items else None
+        details[job_id] = {
+            "result": last.status if last is not None else None,
+            "stop_reason": getattr(last, "stop_reason", None),
+            "input_tokens": _sum([item.input_tokens for item in items]),
+            "output_tokens": _sum([item.output_tokens for item in items]),
+            "cost_usd": _sum([item.cost_usd for item in items]),
+        }
+    return details
+
+
+def _repair_out(attempt: RepairAttempt) -> dict:
+    return RepairAttemptOut(
+        id=attempt.id,
+        incident_id=attempt.incident_id,
+        job_id=attempt.job_id,
+        repository_id=attempt.repository_id,
+        attempt_number=attempt.attempt_number,
+        branch_name=attempt.branch_name,
+        status=attempt.status,
+        explanation=attempt.explanation,
+        diff=attempt.diff,
+        test_command=attempt.test_command,
+        test_output=redact_text(attempt.test_output) if attempt.test_output else attempt.test_output,
+        test_summary=attempt.test_summary,
+        returncode=attempt.returncode,
+        tests_passed=attempt.tests_passed,
+        regression_test_failed_before=attempt.regression_test_failed_before,
+        commit_sha=attempt.commit_sha,
+        stop_reason=attempt.stop_reason,
+        error=attempt.error,
+        pr_url=attempt.pr_url,
+        duration_ms=attempt.duration_ms,
+        input_tokens=attempt.input_tokens,
+        output_tokens=attempt.output_tokens,
+        cost_usd=attempt.cost_usd,
+        created_at=attempt.created_at,
+        finished_at=attempt.finished_at,
+    ).model_dump()
+
+
+def _run_out(job: Job, incident_title: str | None, details: dict[str, Any]) -> dict:
     return RunOut(
         id=job.id,
         type=job.type,
@@ -102,6 +204,7 @@ def _run_out(job: Job, incident_title: str | None) -> dict:
         started_at=job.started_at,
         finished_at=job.finished_at,
         duration_ms=_duration_ms(job),
+        **details,
     ).model_dump()
 
 
@@ -196,6 +299,70 @@ def jobs_router() -> APIRouter:
             finished_at=report.finished_at,
         ).model_dump()
 
+    @router.post(
+        "/incidents/{incident_id}/repair",
+        status_code=status.HTTP_202_ACCEPTED,
+        response_model=JobAccepted,
+    )
+    def request_repair(
+        incident_id: int,
+        request: Request,
+        db: Session = Depends(get_db),
+        clock: Clock = Depends(get_clock),
+    ) -> dict:
+        incident = _get_incident(db, incident_id)
+        if latest_completed_rca(db, incident.id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="A completed RCA is required before requesting a repair",
+            )
+        if repair_repository_for(db, incident.application_id) is None:
+            raise HTTPException(
+                status_code=422,
+                detail="The application has no authorized repository",
+            )
+        existing = queue.active_job(db, "repair", incident.id)
+        if existing is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"A repair job for this incident is already {existing.status} (job {existing.id})",
+            )
+        settings: Settings = request.app.state.settings
+        # The repair engine retries internally (max_repair_attempts): one job run.
+        job = queue.enqueue(
+            db,
+            "repair",
+            clock,
+            incident_id=incident.id,
+            application_id=incident.application_id,
+            max_attempts=1,
+        )
+        db.add(
+            AuditLog(
+                application_id=incident.application_id,
+                incident_id=incident.id,
+                actor="admin",
+                action="repair_requested",
+                details={"job_id": job.id},
+                created_at=clock.now(),
+            )
+        )
+        db.commit()
+        if settings.run_jobs_inline:
+            _process_inline(request, clock)
+            job = db.get(Job, job.id, populate_existing=True)
+        return {"job_id": job.id, "status": job.status}
+
+    @router.get("/incidents/{incident_id}/repairs", response_model=list[RepairAttemptOut])
+    def list_repairs(incident_id: int, db: Session = Depends(get_db)) -> list[dict]:
+        incident = _get_incident(db, incident_id)
+        attempts = db.scalars(
+            select(RepairAttempt)
+            .where(RepairAttempt.incident_id == incident.id)
+            .order_by(RepairAttempt.created_at, RepairAttempt.id)
+        ).all()
+        return [_repair_out(attempt) for attempt in attempts]
+
     @router.get("/runs", response_model=RunPage)
     def list_runs(
         job_type: JobType | None = Query(default=None, alias="type"),
@@ -222,8 +389,9 @@ def jobs_router() -> APIRouter:
             .limit(limit)
             .offset(offset)
         ).all()
+        details = _run_details(db, [job for job, _ in rows])
         return {
-            "items": [_run_out(job, title) for job, title in rows],
+            "items": [_run_out(job, title, details[job.id]) for job, title in rows],
             "total": total,
             "limit": limit,
             "offset": offset,

@@ -12,6 +12,8 @@ export interface ApplicationSummary {
   monthly_spend_usd: number;
   incident_counts: Record<string, number>;
   total_incidents: number;
+  /** Aggregate AI cost in USD; null when no provider reported one (mock). */
+  ai_cost_usd?: number | null;
 }
 
 export interface Incident {
