@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     max_repair_attempts: int = 3
     job_timeout_seconds: int = 600
 
+    # Job queue / worker.
+    # When true, API endpoints that enqueue a job process it before responding.
+    run_jobs_inline: bool = False
+    job_max_attempts: int = 3
+    job_retry_backoff_seconds: int = 30
+    worker_poll_seconds: float = 2.0
+
     # Ingestion limits.
     max_body_bytes: int = 256 * 1024
     max_message_length: int = 4096

@@ -12,9 +12,11 @@ from app.ai.registry import provider_statuses
 from app.api.admin import admin_router
 from app.api.dashboard import dashboard_router
 from app.api.ingest import ingest_router
+from app.api.jobs import jobs_router
 from app.clock import Clock, SystemClock
 from app.config import Settings, get_settings
 from app.db import create_db_engine, create_session_factory, init_db
+from app.jobs.handlers import build_handlers
 
 
 def _health_router() -> APIRouter:
@@ -73,11 +75,13 @@ def create_app(
     app.state.engine = engine
     app.state.session_factory = create_session_factory(engine)
     app.state.clock = clock or SystemClock()
+    app.state.job_handlers = build_handlers(settings)
 
     app.include_router(_health_router())
     app.include_router(admin_router())
     app.include_router(ingest_router())
     app.include_router(dashboard_router())
+    app.include_router(jobs_router())
     app.add_exception_handler(StarletteHTTPException, _http_error)
     return app
 
