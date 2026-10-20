@@ -21,6 +21,16 @@ class StructuredOutputError(AIProviderError):
     """The provider output is not valid JSON or does not match the schema."""
 
 
+class NoPatchAvailable(AIProviderError):
+    """The provider has no patch for the incident (``no_patch_available``).
+
+    The repair engine stops with ``stop_reason`` ``unverifiable`` instead of
+    retrying: without a patch there is nothing the tests could verify.
+    """
+
+    code = "no_patch_available"
+
+
 @dataclass(frozen=True)
 class Prompt:
     """Input for a structured generation.

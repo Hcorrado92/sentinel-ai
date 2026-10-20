@@ -18,7 +18,8 @@ touched.
 
 The run stops with a recorded ``stop_reason`` on: unauthorized repository,
 patch validation failure (security risk), test timeout, attempts, time or
-cost budget exhausted and provider not configured. Every attempt is persisted
+cost budget exhausted, provider not configured and no patch available from
+the provider (``unverifiable``). Every attempt is persisted
 as a ``RepairAttempt`` row and audit/timeline entries ``repair_*`` are recorded.
 """
 
@@ -33,7 +34,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.ai.base import AIProvider, Prompt, ProviderNotConfigured
+from app.ai.base import AIProvider, NoPatchAvailable, Prompt, ProviderNotConfigured
 from app.ai.prompts import RepoExcerpt, build_repair_prompt
 from app.clock import Clock
 from app.config import Settings
@@ -522,6 +523,7 @@ def run_repair(
             test_command=test_command,
             file_list=file_list,
             previous_feedback=feedback,
+            repo_root=str(workspace.path),
         )
         run.prompts.append(prompt)
 
@@ -530,6 +532,11 @@ def run_repair(
         except ProviderNotConfigured as exc:
             run.finish_attempt(attempt, STATUS_STOPPED, stop_reason=STOP_PROVIDER, error=_error_text(exc))
             return run.result(STATUS_STOPPED, STOP_PROVIDER)
+        except NoPatchAvailable as exc:
+            # Nothing to verify: retrying would only repeat the same answer.
+            error = f"{NoPatchAvailable.code}: {_error_text(exc)}"
+            run.finish_attempt(attempt, STATUS_STOPPED, stop_reason=STOP_UNVERIFIABLE, error=error)
+            return run.result(STATUS_STOPPED, STOP_UNVERIFIABLE)
         except Exception as exc:  # noqa: BLE001 - provider failures are retried
             error = _error_text(exc)
             run.finish_attempt(attempt, STATUS_FAILED, error=error)

@@ -56,11 +56,15 @@ export default defineConfig(({ command }) => ({
     environment: "jsdom",
     globals: true,
     setupFiles: ["src/setupTests.ts"],
-    // Spawning one forked process per file can exceed Vitest's worker start-up
-    // timeout on loaded Windows machines; worker threads run sequentially are
-    // cheaper to start and keep the suite deterministic.
-    pool: "threads",
+    // Worker threads can hang during start-up on Windows, so tests run in a
+    // single forked process (Vitest's default, most reliable pool). Reusing
+    // that one worker across files (isolate: false) avoids a start-up per test
+    // file on loaded machines; stubbed globals and mocks are reset after each
+    // test so files stay independent.
+    pool: "forks",
     fileParallelism: false,
     maxWorkers: 1,
+    isolate: false,
+    unstubGlobals: true,
   },
 }));

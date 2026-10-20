@@ -4,8 +4,9 @@ Outputs are chosen by a pluggable rule table evaluated against the prompt
 (task and incident ``context``). The first matching rule produces the raw
 output; when no rule matches, RCA requests get a generic evidence-based report
 built from the stack trace's top frame and any other schema gets a generic
-schema-valid output synthesised from the incident data. The same input always
-yields the same output.
+schema-valid output synthesised from the incident data, except repair (patch)
+requests, which raise ``NoPatchAvailable``. The same input always yields the
+same output.
 """
 
 import enum
@@ -16,7 +17,15 @@ from typing import Any, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel, ValidationError
 
-from app.ai.base import AIProvider, AIResult, Prompt, StructuredOutputError, T, Usage
+from app.ai.base import (
+    AIProvider,
+    AIResult,
+    NoPatchAvailable,
+    Prompt,
+    StructuredOutputError,
+    T,
+    Usage,
+)
 
 MOCK_MODEL = "sentinel-mock-1"
 
@@ -155,14 +164,31 @@ def _rca_output(prompt: Prompt) -> dict[str, Any]:
     }
 
 
+_PATCH_FIELDS = {"files", "unified_diff", "explanation"}
+
+
+def _is_patch_request(prompt: Prompt, schema: type[BaseModel]) -> bool:
+    return prompt.task == "repair" and _PATCH_FIELDS.issubset(schema.model_fields)
+
+
 class MockProvider(AIProvider):
-    """Clearly labelled deterministic provider. Usage is always "not available"."""
+    """Clearly labelled deterministic provider. Usage is always "not available".
+
+    Without explicit ``rules`` it uses the default table of
+    ``app.ai.mock_rules`` (the demo application's faults). Repair requests that
+    no rule matches raise ``NoPatchAvailable`` (``no_patch_available``).
+    """
 
     name = "mock"
     is_mock = True
 
     def __init__(self, rules: list[MockRule] | None = None) -> None:
-        self._rules: list[MockRule] = list(rules or [])
+        if rules is None:
+            # Imported lazily: the rules depend on the repo tools and patch models.
+            from app.ai.mock_rules import default_rules
+
+            rules = default_rules()
+        self._rules: list[MockRule] = list(rules)
 
     @property
     def rules(self) -> tuple[MockRule, ...]:
@@ -179,6 +205,9 @@ class MockProvider(AIProvider):
                 break
         if raw is None and _is_rca_request(prompt, schema):
             raw = _rca_output(prompt)
+        if raw is None and _is_patch_request(prompt, schema):
+            label = _incident_label(prompt)
+            raise NoPatchAvailable(f"the mock provider has no patch for this incident ({label})")
         if raw is None:
             raw = _synthesise_model(schema, prompt)
         if isinstance(raw, BaseModel):

@@ -173,6 +173,14 @@ def build_rca_prompt(
             "event_count": _attr(incident, "event_count", len(ordered)),
             "top_frame": dict(top_frame) if top_frame else None,
             "relevant_files": [excerpt.path for excerpt in excerpts],
+            "excerpts": [
+                {
+                    "path": excerpt.path,
+                    "start_line": excerpt.start_line,
+                    "content": _truncate(excerpt.content, MAX_EXCERPT_CHARS),
+                }
+                for excerpt in list(excerpts)[:MAX_EXCERPTS]
+            ],
         }
     )
     return Prompt(
@@ -221,12 +229,15 @@ def build_repair_prompt(
     test_command: Sequence[str],
     file_list: Sequence[str] = (),
     previous_feedback: str | None = None,
+    repo_root: str | None = None,
 ) -> Prompt:
     """Build the repair prompt for one attempt.
 
     ``rca`` is the validated RCA report as a dict, ``files`` hold the full
     (redacted) content of the relevant files and ``previous_feedback`` the test
     output or rejection reason of the previous attempt (untrusted data).
+    ``repo_root`` is the isolated copy, so the mock provider can read current
+    file contents with ``RepoReader``; it never appears in the prompt text.
     """
     rca_text = json.dumps(redact_obj(rca), indent=2, sort_keys=True) if rca else "No RCA report."
     sections = [
@@ -268,6 +279,8 @@ def build_repair_prompt(
             "attempt": attempt,
             "relevant_files": [item.path for item in files],
             "previous_test_output": feedback,
+            "suspect_locations": list((rca or {}).get("suspect_locations") or []),
+            "repo_root": repo_root,
         }
     )
     return Prompt(
