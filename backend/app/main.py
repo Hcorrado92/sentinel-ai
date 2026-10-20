@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import APIRouter, FastAPI, Request
 
 from app.api.admin import admin_router
+from app.api.ingest import ingest_router
 from app.clock import Clock, SystemClock
 from app.config import Settings, get_settings
 from app.db import create_db_engine, create_session_factory, init_db
@@ -58,6 +59,7 @@ def create_app(
 
     app.include_router(_health_router())
     app.include_router(admin_router())
+    app.include_router(ingest_router())
     return app
 
 
