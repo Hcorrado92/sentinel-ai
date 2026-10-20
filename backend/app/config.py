@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # Directory where isolated repository copies are created for repairs.
     workdir: str = "./var/workdir"
     max_repair_attempts: int = 3
+    # Wall-clock budget for a whole repair run and timeout for each test run.
+    repair_time_budget_seconds: int = 1800
+    repair_test_timeout_seconds: float = 300.0
     job_timeout_seconds: int = 600
     # Limits for patches proposed by the repair engine.
     max_patch_files: int = 20
