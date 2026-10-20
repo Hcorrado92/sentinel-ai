@@ -169,6 +169,22 @@ def _store(
     result = IngestResult(event_id=event_id, incident_id=incident.id, deduplicated=False)
     db.flush()
     _audit(db, clock, application_id, result)
+    db.add(
+        AuditLog(
+            application_id=application_id,
+            incident_id=incident.id,
+            actor=INGEST_ACTOR,
+            action="incident_grouped",
+            details={
+                "event_id": event_id,
+                "fingerprint": incident.fingerprint,
+                "event_count": incident.event_count,
+                "new_incident": incident.event_count == 1,
+                "severity": incident.severity,
+            },
+            created_at=now,
+        )
+    )
     db.commit()
     return result
 

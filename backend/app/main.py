@@ -4,8 +4,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, FastAPI, Request
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.admin import admin_router
+from app.api.dashboard import dashboard_router
 from app.api.ingest import ingest_router
 from app.clock import Clock, SystemClock
 from app.config import Settings, get_settings
@@ -25,6 +29,17 @@ def _health_router() -> APIRouter:
         }
 
     return router
+
+
+async def _http_error(request: Request, exc: StarletteHTTPException):
+    """404s (unknown routes and missing resources) always get a JSON body."""
+    if exc.status_code == 404:
+        return JSONResponse(
+            status_code=404,
+            content={"detail": exc.detail or "Not Found", "error": "not_found"},
+            headers=getattr(exc, "headers", None),
+        )
+    return await http_exception_handler(request, exc)
 
 
 def create_app(
@@ -60,6 +75,8 @@ def create_app(
     app.include_router(_health_router())
     app.include_router(admin_router())
     app.include_router(ingest_router())
+    app.include_router(dashboard_router())
+    app.add_exception_handler(StarletteHTTPException, _http_error)
     return app
 
 
