@@ -1,10 +1,12 @@
 """Persistence of ingested events: redaction, dedup and incident grouping.
 
-Grouping is provisional: events are attached to an incident keyed by
-(application, exception_type). Stack-trace fingerprinting replaces it later.
+Events are grouped by (application, fingerprint), where the fingerprint comes
+from the exception type and the normalized stack-trace frames
+(``app.ingest.fingerprint``). Severity is recomputed on every new event
+(``app.ingest.severity``). A resolved incident that receives a new event is
+reopened with status ``regressed``.
 """
 
-import hashlib
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -14,6 +16,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.clock import Clock
+from app.ingest.fingerprint import compute_fingerprint
+from app.ingest.severity import compute_severity, is_production
 from app.models import AuditLog, Event, Incident
 from app.schemas.ingest import IngestEvent
 from app.security.redaction import redact_obj, redact_text
@@ -27,10 +31,6 @@ class IngestResult:
     event_id: str
     incident_id: int
     deduplicated: bool
-
-
-def provisional_fingerprint(exception_type: str) -> str:
-    return hashlib.sha256(f"provisional:{exception_type}".encode("utf-8")).hexdigest()
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -64,10 +64,26 @@ def _audit(db: Session, clock: Clock, application_id: int, result: IngestResult)
     )
 
 
+def _seen_in_production(db: Session, incident: Incident, environment: str) -> bool:
+    if is_production(environment):
+        return True
+    if incident.id is None:
+        return False
+    environments = db.scalars(
+        select(Event.environment).where(Event.incident_id == incident.id).distinct()
+    )
+    return any(is_production(env) for env in environments)
+
+
 def _attach_incident(
-    db: Session, application_id: int, payload: IngestEvent, message: str, now: datetime
+    db: Session,
+    application_id: int,
+    payload: IngestEvent,
+    message: str,
+    event_id: str,
+    now: datetime,
 ) -> Incident:
-    fingerprint = provisional_fingerprint(payload.exception_type)
+    fingerprint = compute_fingerprint(payload.exception_type, payload.stack_trace)
     incident = db.scalar(
         select(Incident).where(
             Incident.application_id == application_id, Incident.fingerprint == fingerprint
@@ -80,7 +96,7 @@ def _attach_incident(
             fingerprint=fingerprint,
             title=_title(payload.exception_type, message),
             exception_type=payload.exception_type,
-            severity="medium",
+            severity="low",
             status="open",
             event_count=0,
             first_seen=seen,
@@ -88,11 +104,35 @@ def _attach_incident(
             created_at=now,
         )
         db.add(incident)
+    elif incident.status == "resolved":
+        incident.status = "regressed"
+        db.add(
+            AuditLog(
+                application_id=application_id,
+                incident_id=incident.id,
+                actor=INGEST_ACTOR,
+                action="incident_regressed",
+                details={
+                    "event_id": event_id,
+                    "previous_status": "resolved",
+                    "resolved_at": incident.resolved_at.isoformat()
+                    if incident.resolved_at
+                    else None,
+                },
+                created_at=now,
+            )
+        )
+        incident.resolved_at = None
+
+    production = _seen_in_production(db, incident, payload.environment)
     incident.event_count += 1
     if seen < _as_utc(incident.first_seen):
         incident.first_seen = seen
     if seen > _as_utc(incident.last_seen):
         incident.last_seen = seen
+    incident.severity = compute_severity(
+        incident.exception_type, production, incident.event_count
+    )
     db.flush()
     return incident
 
@@ -106,19 +146,12 @@ def _deduplicated(db: Session, clock: Clock, application_id: int, event: Event) 
     return result
 
 
-def ingest_event(
-    db: Session, application_id: int, payload: IngestEvent, clock: Clock
+def _store(
+    db: Session, application_id: int, payload: IngestEvent, event_id: str, clock: Clock
 ) -> IngestResult:
-    """Store a validated event for ``application_id`` (already authorized)."""
-    if payload.event_id is not None:
-        existing = _find_event(db, application_id, payload.event_id)
-        if existing is not None:
-            return _deduplicated(db, clock, application_id, existing)
-
-    event_id = payload.event_id or uuid.uuid4().hex
     message = redact_text(payload.message)
     now = clock.now()
-    incident = _attach_incident(db, application_id, payload, message, now)
+    incident = _attach_incident(db, application_id, payload, message, event_id, now)
     event = Event(
         application_id=application_id,
         incident_id=incident.id,
@@ -134,15 +167,29 @@ def ingest_event(
     )
     db.add(event)
     result = IngestResult(event_id=event_id, incident_id=incident.id, deduplicated=False)
+    db.flush()
+    _audit(db, clock, application_id, result)
+    db.commit()
+    return result
+
+
+def ingest_event(
+    db: Session, application_id: int, payload: IngestEvent, clock: Clock
+) -> IngestResult:
+    """Store a validated event for ``application_id`` (already authorized)."""
+    if payload.event_id is not None:
+        existing = _find_event(db, application_id, payload.event_id)
+        if existing is not None:
+            return _deduplicated(db, clock, application_id, existing)
+
+    event_id = payload.event_id or uuid.uuid4().hex
     try:
-        db.flush()
-        _audit(db, clock, application_id, result)
-        db.commit()
+        return _store(db, application_id, payload, event_id, clock)
     except IntegrityError:
-        # A concurrent request stored the same event id first.
+        # A concurrent request stored the same event id or created the same
+        # incident first: dedup, or retry once against the existing incident.
         db.rollback()
         existing = _find_event(db, application_id, event_id)
-        if existing is None:
-            raise
-        return _deduplicated(db, clock, application_id, existing)
-    return result
+        if existing is not None:
+            return _deduplicated(db, clock, application_id, existing)
+        return _store(db, application_id, payload, event_id, clock)

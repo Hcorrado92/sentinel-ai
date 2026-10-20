@@ -18,6 +18,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db import Base
 
 
+INCIDENT_STATUSES = ("open", "investigating", "fix_proposed", "resolved", "regressed")
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
