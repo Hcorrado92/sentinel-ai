@@ -1,6 +1,9 @@
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { ProviderBadge } from "./components/ProviderBadge";
 import { TokenSettings } from "./components/TokenSettings";
+import { ApplicationsPage } from "./pages/ApplicationsPage";
+import { IncidentDetailPage } from "./pages/IncidentDetailPage";
+import { IncidentsPage } from "./pages/IncidentsPage";
 
 const navItems = [
   { to: "/applications", label: "Applications" },
@@ -49,14 +52,9 @@ export default function App() {
       <main className="mx-auto max-w-6xl px-4 py-6">
         <Routes>
           <Route path="/" element={<Navigate to="/incidents" replace />} />
-          <Route
-            path="/applications"
-            element={<Placeholder title="Applications" text="Monitored applications will be listed here." />}
-          />
-          <Route
-            path="/incidents"
-            element={<Placeholder title="Incidents" text="Grouped incidents will be listed here." />}
-          />
+          <Route path="/applications" element={<ApplicationsPage />} />
+          <Route path="/incidents" element={<IncidentsPage />} />
+          <Route path="/incidents/:id" element={<IncidentDetailPage />} />
           <Route
             path="/runs"
             element={<Placeholder title="Runs" text="RCA and repair run history will be listed here." />}
