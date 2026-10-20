@@ -8,6 +8,7 @@ from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.ai.registry import provider_statuses
 from app.api.admin import admin_router
 from app.api.dashboard import dashboard_router
 from app.api.ingest import ingest_router
@@ -26,6 +27,7 @@ def _health_router() -> APIRouter:
             "status": "ok",
             "ai_provider": settings.ai_provider,
             "ai_provider_mock": settings.ai_provider_is_mock,
+            "providers": provider_statuses(settings),
         }
 
     return router

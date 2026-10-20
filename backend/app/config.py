@@ -22,6 +22,14 @@ class Settings(BaseSettings):
     admin_token: str | None = None
 
     ai_provider: str = MOCK_AI_PROVIDER
+    # Anthropic adapter (used only when ai_provider == "anthropic" and the
+    # ANTHROPIC_API_KEY environment variable is set on the server).
+    anthropic_model: str = "claude-sonnet-5-5"
+    anthropic_max_tokens: int = 4096
+    # Estimated prices in USD per million tokens for ``anthropic_model``.
+    anthropic_input_usd_per_mtok: float = 3.0
+    anthropic_output_usd_per_mtok: float = 15.0
+
     github_publish: bool = False
 
     # Directory where isolated repository copies are created for repairs.
