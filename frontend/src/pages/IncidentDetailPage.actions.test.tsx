@@ -219,6 +219,45 @@ describe("IncidentDetailPage RCA, repairs and actions", () => {
     expect(error).toHaveTextContent("An RCA job for this incident is already queued (job 7)");
   });
 
+  it("marks the incident resolved with POST /resolve and shows the event frequency sparkline", async () => {
+    const fetchMock = mockApi({
+      ...baseRoutes,
+      "GET /api/v1/incidents/42/repairs": { body: [] },
+      "GET /api/v1/incidents/42/stats": {
+        body: {
+          bucket: "hour",
+          incident_id: 42,
+          application_id: 1,
+          total: 3,
+          buckets: [
+            { start: "2026-02-03T08:00:00Z", count: 1 },
+            { start: "2026-02-03T09:00:00Z", count: 2 },
+          ],
+        },
+      },
+      "POST /api/v1/incidents/42/resolve": {
+        body: { ...detail, status: "resolved", resolved_at: "2026-02-03T11:00:00Z" },
+      },
+    });
+    renderPage();
+
+    expect(await screen.findByRole("img", { name: /Events per hour/ })).toBeInTheDocument();
+    expect(screen.getAllByTestId("sparkline-bar")).toHaveLength(2);
+    expect(String(fetchMock.mock.calls.find(([input]) => String(input).includes("/stats"))![0])).toContain(
+      "bucket=hour",
+    );
+
+    expect(screen.getByTestId("incident-status")).toHaveTextContent("investigating");
+    fireEvent.click(screen.getByRole("button", { name: "Mark resolved" }));
+
+    expect(await screen.findByTestId("action-resolve-result")).toHaveTextContent("Incident marked resolved.");
+    expect(screen.getByTestId("incident-status")).toHaveTextContent("resolved");
+    expect(screen.getByRole("button", { name: "Mark resolved" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Mark resolved" })).toHaveAccessibleDescription(/reopen it as regressed/);
+    const post = fetchMock.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(String(post![0])).toBe("/api/v1/incidents/42/resolve");
+  });
+
   it("shows the published pull request with a link", async () => {
     const pr: PullRequest = {
       id: 2,

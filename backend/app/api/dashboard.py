@@ -1,7 +1,9 @@
-"""Dashboard read endpoints: applications, incidents, events, timeline and audit log.
+"""Dashboard endpoints: applications, incidents, events, timeline and audit log.
 
 All endpoints require the admin bearer token. Events are stored already
-redacted (``app.ingestion``), so they are returned as persisted.
+redacted (``app.ingestion``), so they are returned as persisted. The only
+write is ``POST /incidents/{id}/resolve``, which is audited; a later matching
+event reopens the incident as ``regressed`` (``app.ingestion``).
 """
 
 from datetime import datetime
@@ -12,6 +14,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.clock import Clock, get_clock
 from app.db import get_db
 from app.models import (
     INCIDENT_STATUSES,
@@ -26,12 +29,19 @@ from app.security.auth import require_admin
 
 # Audit actions shown in the incident timeline; ``rca_*``, ``repair_*`` and
 # ``pr_*`` actions are included by prefix.
-TIMELINE_ACTIONS = frozenset({"event_received", "incident_grouped", "incident_regressed"})
+TIMELINE_ACTIONS = frozenset(
+    {"event_received", "incident_grouped", "incident_regressed", "incident_resolved"}
+)
 TIMELINE_PREFIXES = ("rca_", "repair_", "pr_")
 
 MAX_PAGE_SIZE = 200
+MAX_SEARCH_LENGTH = 200
+ADMIN_ACTOR = "admin"
 
-IncidentStatus = Literal["open", "investigating", "fix_proposed", "resolved", "regressed"]
+# ``active`` is a pseudo-status matching every incident that is not resolved.
+IncidentStatus = Literal[
+    "open", "investigating", "fix_proposed", "resolved", "regressed", "active"
+]
 Severity = Literal["low", "medium", "high", "critical"]
 
 
@@ -145,6 +155,33 @@ def _in_timeline(action: str) -> bool:
     return action in TIMELINE_ACTIONS or action.startswith(TIMELINE_PREFIXES)
 
 
+def _like_pattern(text: str) -> str:
+    """Substring LIKE pattern with ``%``, ``_`` and the escape char escaped."""
+    escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def _incident_detail(db: Session, incident: Incident) -> dict:
+    application = db.get(Application, incident.application_id)
+    latest_rca = db.scalar(
+        select(RCAReport.status)
+        .where(RCAReport.incident_id == incident.id)
+        .order_by(RCAReport.created_at.desc(), RCAReport.id.desc())
+        .limit(1)
+    )
+    latest_repair = db.scalar(
+        select(RepairAttempt.status)
+        .where(RepairAttempt.incident_id == incident.id)
+        .order_by(RepairAttempt.created_at.desc(), RepairAttempt.id.desc())
+        .limit(1)
+    )
+    return {
+        **_incident_out(incident, application.name if application else ""),
+        "latest_rca_status": latest_rca,
+        "latest_repair_status": latest_repair,
+    }
+
+
 def dashboard_router() -> APIRouter:
     router = APIRouter(prefix="/api/v1", dependencies=[Depends(require_admin)])
 
@@ -195,6 +232,7 @@ def dashboard_router() -> APIRouter:
         application_id: int | None = None,
         status_filter: IncidentStatus | None = Query(default=None, alias="status"),
         severity: Severity | None = None,
+        q: str | None = Query(default=None, max_length=MAX_SEARCH_LENGTH),
         order: Literal["asc", "desc"] = "desc",
         limit: int = Query(default=50, ge=1, le=MAX_PAGE_SIZE),
         offset: int = Query(default=0, ge=0),
@@ -203,10 +241,15 @@ def dashboard_router() -> APIRouter:
         conditions = []
         if application_id is not None:
             conditions.append(Incident.application_id == application_id)
-        if status_filter is not None:
+        if status_filter == "active":
+            conditions.append(Incident.status != "resolved")
+        elif status_filter is not None:
             conditions.append(Incident.status == status_filter)
         if severity is not None:
             conditions.append(Incident.severity == severity)
+        if q is not None and q.strip():
+            # Case-insensitive substring search on the exception type.
+            conditions.append(Incident.exception_type.ilike(_like_pattern(q.strip()), escape="\\"))
 
         total = db.scalar(select(func.count()).select_from(Incident).where(*conditions)) or 0
         sort = Incident.last_seen.desc() if order == "desc" else Incident.last_seen.asc()
@@ -228,25 +271,35 @@ def dashboard_router() -> APIRouter:
 
     @router.get("/incidents/{incident_id}", response_model=IncidentDetail)
     def get_incident(incident_id: int, db: Session = Depends(get_db)) -> dict:
+        return _incident_detail(db, _get_incident(db, incident_id))
+
+    @router.post("/incidents/{incident_id}/resolve", response_model=IncidentDetail)
+    def resolve_incident(
+        incident_id: int,
+        db: Session = Depends(get_db),
+        clock: Clock = Depends(get_clock),
+    ) -> dict:
         incident = _get_incident(db, incident_id)
-        application = db.get(Application, incident.application_id)
-        latest_rca = db.scalar(
-            select(RCAReport.status)
-            .where(RCAReport.incident_id == incident.id)
-            .order_by(RCAReport.created_at.desc(), RCAReport.id.desc())
-            .limit(1)
+        if incident.status == "resolved":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="Incident is already resolved"
+            )
+        now = clock.now()
+        previous = incident.status
+        incident.status = "resolved"
+        incident.resolved_at = now
+        db.add(
+            AuditLog(
+                application_id=incident.application_id,
+                incident_id=incident.id,
+                actor=ADMIN_ACTOR,
+                action="incident_resolved",
+                details={"previous_status": previous},
+                created_at=now,
+            )
         )
-        latest_repair = db.scalar(
-            select(RepairAttempt.status)
-            .where(RepairAttempt.incident_id == incident.id)
-            .order_by(RepairAttempt.created_at.desc(), RepairAttempt.id.desc())
-            .limit(1)
-        )
-        return {
-            **_incident_out(incident, application.name if application else ""),
-            "latest_rca_status": latest_rca,
-            "latest_repair_status": latest_repair,
-        }
+        db.commit()
+        return _incident_detail(db, incident)
 
     @router.get("/incidents/{incident_id}/events", response_model=list[EventOut])
     def list_events(

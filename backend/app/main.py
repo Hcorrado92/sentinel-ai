@@ -15,6 +15,7 @@ from app.api.dashboard import dashboard_router
 from app.api.ingest import ingest_router
 from app.api.jobs import jobs_router
 from app.api.pull_requests import pull_requests_router
+from app.api.stats import stats_router
 from app.clock import Clock, SystemClock
 from app.config import Settings, get_settings
 from app.db import create_db_engine, create_session_factory, init_db
@@ -89,6 +90,7 @@ def create_app(
     app.include_router(jobs_router())
     app.include_router(costs_router())
     app.include_router(pull_requests_router())
+    app.include_router(stats_router())
     app.add_exception_handler(StarletteHTTPException, _http_error)
     return app
 
