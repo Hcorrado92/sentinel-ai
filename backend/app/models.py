@@ -119,15 +119,26 @@ class AuditLog(Base):
 
 
 class Job(Base):
+    """Persistent background job; see ``app.jobs.queue`` for the state machine."""
+
     __tablename__ = "jobs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     incident_id: Mapped[int | None] = mapped_column(
         ForeignKey("incidents.id"), nullable=True, index=True
     )
-    kind: Mapped[str] = mapped_column(String(50), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="queued", nullable=False)
+    application_id: Mapped[int | None] = mapped_column(
+        ForeignKey("applications.id"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(20), default="queued", nullable=False, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
+    run_after: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_ref: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
