@@ -1,7 +1,8 @@
 """Dashboard endpoints: applications, incidents, events, timeline and audit log.
 
 All endpoints require the admin bearer token. Events are stored already
-redacted (``app.ingestion``), so they are returned as persisted. The only
+redacted (``app.ingestion``); as defence in depth every free-text field and
+audit detail is redacted again on output (redaction is idempotent). The only
 write is ``POST /incidents/{id}/resolve``, which is audited; a later matching
 event reopens the incident as ``regressed`` (``app.ingestion``).
 """
@@ -26,6 +27,7 @@ from app.models import (
     RepairAttempt,
 )
 from app.security.auth import require_admin
+from app.security.redaction import redact_obj, redact_text
 
 # Audit actions shown in the incident timeline; ``rca_*``, ``repair_*`` and
 # ``pr_*`` actions are included by prefix.
@@ -122,7 +124,7 @@ def _incident_out(incident: Incident, application_name: str) -> dict:
         application_id=incident.application_id,
         application_name=application_name,
         fingerprint=incident.fingerprint,
-        title=incident.title,
+        title=redact_text(incident.title),
         exception_type=incident.exception_type,
         severity=incident.severity,
         status=incident.status,
@@ -323,11 +325,11 @@ def dashboard_router() -> APIRouter:
                 timestamp=event.timestamp,
                 received_at=event.received_at,
                 exception_type=event.exception_type,
-                message=event.message,
-                stack_trace=event.stack_trace,
+                message=redact_text(event.message),
+                stack_trace=redact_text(event.stack_trace),
                 environment=event.environment,
-                correlation_id=event.correlation_id,
-                metadata=event.metadata_json or {},
+                correlation_id=redact_text(event.correlation_id) if event.correlation_id else None,
+                metadata=redact_obj(event.metadata_json or {}),
             ).model_dump()
             for event in events
         ]
@@ -341,7 +343,7 @@ def dashboard_router() -> APIRouter:
                 type=entry.action,
                 timestamp=entry.created_at,
                 actor=entry.actor,
-                details=entry.details or {},
+                details=redact_obj(entry.details or {}),
             ).model_dump()
             for entry in _audit_entries(db, incident.id)
             if _in_timeline(entry.action)
@@ -355,7 +357,7 @@ def dashboard_router() -> APIRouter:
                 id=entry.id,
                 actor=entry.actor,
                 action=entry.action,
-                details=entry.details or {},
+                details=redact_obj(entry.details or {}),
                 created_at=entry.created_at,
             ).model_dump()
             for entry in _audit_entries(db, incident.id)

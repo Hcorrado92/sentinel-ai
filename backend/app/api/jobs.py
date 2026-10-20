@@ -26,7 +26,7 @@ from app.jobs import queue
 from app.jobs.handlers import latest_completed_rca, repair_repository_for
 from app.models import AuditLog, Incident, Job, RCAReport, RepairAttempt
 from app.security.auth import require_admin
-from app.security.redaction import redact_text
+from app.security.redaction import redact_obj, redact_text
 
 JobType = Literal["rca", "repair"]
 JobStatus = Literal["queued", "running", "succeeded", "failed", "cancelled"]
@@ -184,8 +184,8 @@ def _repair_out(attempt: RepairAttempt) -> dict:
         attempt_number=attempt.attempt_number,
         branch_name=attempt.branch_name,
         status=attempt.status,
-        explanation=attempt.explanation,
-        diff=attempt.diff,
+        explanation=redact_text(attempt.explanation) if attempt.explanation else attempt.explanation,
+        diff=redact_text(attempt.diff) if attempt.diff else attempt.diff,
         test_command=attempt.test_command,
         test_output=redact_text(attempt.test_output) if attempt.test_output else attempt.test_output,
         test_summary=attempt.test_summary,
@@ -194,7 +194,7 @@ def _repair_out(attempt: RepairAttempt) -> dict:
         regression_test_failed_before=attempt.regression_test_failed_before,
         commit_sha=attempt.commit_sha,
         stop_reason=attempt.stop_reason,
-        error=attempt.error,
+        error=redact_text(attempt.error) if attempt.error else attempt.error,
         pr_url=attempt.pr_url,
         duration_ms=attempt.duration_ms,
         input_tokens=attempt.input_tokens,
@@ -211,11 +211,11 @@ def _run_out(job: Job, incident_title: str | None, details: dict[str, Any]) -> d
         type=job.type,
         status=job.status,
         incident_id=job.incident_id,
-        incident_title=incident_title,
+        incident_title=redact_text(incident_title) if incident_title else incident_title,
         application_id=job.application_id,
         attempts=job.attempts,
         max_attempts=job.max_attempts,
-        error=job.error,
+        error=redact_text(job.error) if job.error else job.error,
         result_ref=job.result_ref,
         created_at=job.created_at,
         started_at=job.started_at,
@@ -302,15 +302,15 @@ def jobs_router() -> APIRouter:
             incident_id=report.incident_id,
             job_id=report.job_id,
             status=report.status,
-            summary=report.summary,
-            report=report.report or {},
+            summary=redact_text(report.summary or ""),
+            report=redact_obj(report.report or {}),
             provider=report.provider,
             model=report.model,
             is_mock=report.provider == "mock",
             input_tokens=report.input_tokens,
             output_tokens=report.output_tokens,
             cost_usd=report.cost_usd,
-            error=report.error,
+            error=redact_text(report.error) if report.error else report.error,
             duration_ms=report.duration_ms,
             created_at=report.created_at,
             finished_at=report.finished_at,

@@ -457,10 +457,10 @@ def test_unauthorized_repository_stops(db, clock, setup, rca, source, original, 
     result = run_repair(db, incident, rca, foreign, provider, git, clock, make_settings(tmp_path))
 
     assert result.status == "stopped"
-    assert result.stop_reason == "unauthorized_repo"
+    assert result.stop_reason == "unauthorized_repository"
     assert provider.prompts == [] and git.calls == []
     assert result.workspace_path is None
-    assert result.attempts[0].stop_reason == "unauthorized_repo"
+    assert result.attempts[0].stop_reason == "unauthorized_repository"
     assert tree(source) == original
 
 

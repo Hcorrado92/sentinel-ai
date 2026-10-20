@@ -71,7 +71,7 @@ STATUS_SUCCEEDED = "succeeded"
 STATUS_FAILED = "failed"
 STATUS_STOPPED = "stopped"
 
-STOP_UNAUTHORIZED = "unauthorized_repo"
+STOP_UNAUTHORIZED = "unauthorized_repository"
 STOP_SECURITY_RISK = "security_risk"
 STOP_TIMEOUT = "timeout"
 STOP_ATTEMPTS_EXHAUSTED = "attempts_exhausted"
