@@ -10,6 +10,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.ai.registry import provider_statuses
 from app.api.admin import admin_router
+from app.api.costs import costs_router
 from app.api.dashboard import dashboard_router
 from app.api.ingest import ingest_router
 from app.api.jobs import jobs_router
@@ -86,6 +87,7 @@ def create_app(
     app.include_router(ingest_router())
     app.include_router(dashboard_router())
     app.include_router(jobs_router())
+    app.include_router(costs_router())
     app.include_router(pull_requests_router())
     app.add_exception_handler(StarletteHTTPException, _http_error)
     return app

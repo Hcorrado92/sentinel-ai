@@ -4,6 +4,7 @@ import { TokenSettings } from "./components/TokenSettings";
 import { ApplicationsPage } from "./pages/ApplicationsPage";
 import { IncidentDetailPage } from "./pages/IncidentDetailPage";
 import { IncidentsPage } from "./pages/IncidentsPage";
+import { RunsPage } from "./pages/RunsPage";
 
 const navItems = [
   { to: "/applications", label: "Applications" },
@@ -55,10 +56,7 @@ export default function App() {
           <Route path="/applications" element={<ApplicationsPage />} />
           <Route path="/incidents" element={<IncidentsPage />} />
           <Route path="/incidents/:id" element={<IncidentDetailPage />} />
-          <Route
-            path="/runs"
-            element={<Placeholder title="Runs" text="RCA and repair run history will be listed here." />}
-          />
+          <Route path="/runs" element={<RunsPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>

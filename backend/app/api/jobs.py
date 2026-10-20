@@ -74,6 +74,8 @@ class RunOut(BaseModel):
     # Outcome of the run: the latest RCA report status or repair attempt status.
     result: str | None
     stop_reason: str | None
+    # AI provider used by the run (``mock`` for the deterministic mock).
+    provider: str | None
     input_tokens: int | None
     output_tokens: int | None
     cost_usd: float | None
@@ -136,21 +138,36 @@ def _run_details(db: Session, jobs: list[Job]) -> dict[int, dict[str, Any]]:
     """Result, stop reason, tokens and cost of each run (``None`` when unknown)."""
     ids = [job.id for job in jobs]
     rows: dict[int, list[Any]] = {job_id: [] for job_id in ids}
+    providers: dict[int, str | None] = {}
     if ids:
         for report in db.scalars(
             select(RCAReport).where(RCAReport.job_id.in_(ids)).order_by(RCAReport.id)
         ):
             rows[report.job_id].append(report)
+            providers[report.job_id] = report.provider
         for attempt in db.scalars(
             select(RepairAttempt).where(RepairAttempt.job_id.in_(ids)).order_by(RepairAttempt.id)
         ):
             rows[attempt.job_id].append(attempt)
+        # Repair attempts do not store the provider; the repair engine records
+        # it in the ``repair_started`` audit entry of each job.
+        incident_ids = {job.incident_id for job in jobs if job.type == "repair" and job.incident_id}
+        if incident_ids:
+            for entry in db.scalars(
+                select(AuditLog).where(
+                    AuditLog.action == "repair_started", AuditLog.incident_id.in_(incident_ids)
+                )
+            ):
+                job_id = (entry.details or {}).get("job_id")
+                if job_id in rows:
+                    providers[job_id] = (entry.details or {}).get("provider")
     details: dict[int, dict[str, Any]] = {}
     for job_id, items in rows.items():
         last = items[-1] if items else None
         details[job_id] = {
             "result": last.status if last is not None else None,
             "stop_reason": getattr(last, "stop_reason", None),
+            "provider": providers.get(job_id),
             "input_tokens": _sum([item.input_tokens for item in items]),
             "output_tokens": _sum([item.output_tokens for item in items]),
             "cost_usd": _sum([item.cost_usd for item in items]),
